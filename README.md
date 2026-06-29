@@ -21,7 +21,7 @@
 
 - 🧱 **Block-level drag & drop** — paragraphs, headings, lists, tasks, blockquotes, callouts, tables, code blocks, math blocks
 - 📐 **Nested drag** — horizontal position controls indent level; vertical position controls insertion row
-- 🔗 **Multi-line selection drag** — long-press or click to select a range, then drag as a group
+- 🔗 **Multi-select drag** — select multiple blocks with handles or native text selection, then drag any selected handle to move the group
 - 🎨 **Customizable handles** — 4 icon styles (dot / grip-dots / grip-lines / square), adjustable size, color, and horizontal offset
 - 📍 **Visual drop indicator** — glowing line shows exactly where the block will land
 - 📱 **Mobile support** — works on Android (tested)
@@ -59,7 +59,7 @@ Restart Obsidian and enable the plugin.
 
 **Nested lists & blockquotes:** move the cursor horizontally while dragging to control indent level.
 
-**Multi-line selection:** long-press (touch) or click multiple handles to select a range, then drag the entire selection.
+**Multi-select drag:** long-press (touch), click multiple handles, or use normal text drag-selection across blocks, then drag any selected handle to move the entire selection.
 
 **Mobile text long-press drag:** when enabled, long-press a text line or rendered block content to drag a single block directly without reaching for the left handle.
 
@@ -75,7 +75,7 @@ Restart Obsidian and enable the plugin.
 | **Handle size** | 12 – 28 px | 16 px |
 | **Handle horizontal offset** | Shift handle left (−80) or right (+80) px | 0 px |
 | **Indicator color** | Follow theme accent or pick a custom color | Theme |
-| **Multi-line selection** | Enable range-select-then-drag workflow | On |
+| **Multi-select drag** | Enable selecting multiple blocks by handle or native text selection and dragging them as one group | On |
 | **Mobile text long-press drag** | On mobile, long-press a text line or rendered block content to drag a single block directly | On |
 | **Cross-file drag** | Allow dragging blocks into another open file editor | Off |
 | **Drag source visual style** | Shared style set used by drag-source and list-drop highlights (Outline only / Subtle highlight / Filled highlight) | Subtle highlight |
@@ -119,4 +119,3 @@ npm run test
 PRs and issues are welcome!
 
 If this plugin helps you, a ⭐ on GitHub would mean a lot.
-

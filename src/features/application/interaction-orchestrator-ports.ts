@@ -15,5 +15,10 @@ export interface DragEventHandlerPort {
         e: PointerEvent,
         getBlockInfo?: () => BlockInfo | null
     ): void;
+    resolveDragSourceFromHandle(
+        handle: HTMLElement,
+        event: { clientX: number; clientY: number },
+        getBlockInfo?: () => BlockInfo | null
+    ): BlockInfo | null;
+    clearCommittedSelectionForDragStart(): void;
 }
-

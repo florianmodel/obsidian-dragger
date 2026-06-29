@@ -14,6 +14,9 @@ import {
     type CommittedRangeSelection,
     type MouseRangeSelectState,
     buildRangeSelectionBoundaryFromBlock,
+    buildDragSourceBlockFromBlocks,
+    collectSelectedBlocksBetween,
+    buildSelectedBlockRangeFromBlockInfo,
 } from '../selection/selection-model';
 import { resolveRangeBoundaryAtPoint } from '../selection/hit-boundary';
 import { resolveDragTransferGuard as resolveDragTransferGuardDecision } from './drag-transfer-guard';
@@ -40,7 +43,11 @@ import {
     updateSelectionFromBoundary as updateSelectionFromBoundaryByFlow,
     updateSelectionFromLine as updateSelectionFromLineByFlow,
 } from '../selection/selection-flow';
-import { cloneSelectedBlocks } from '../selection/block-selection';
+import {
+    cloneSelectedBlocks,
+    mergeSelectedBlocks,
+    type SelectedBlockRange,
+} from '../selection/block-selection';
 import {
     buildCancelledLifecycleEvent,
     buildDragActiveLifecycleEvent,
@@ -247,16 +254,18 @@ export class DragEventHandler {
     startPointerDragFromHandle(handle: HTMLElement, e: PointerEvent, getBlockInfo?: () => BlockInfo | null): void {
         if (this.gesture.phase !== 'idle') return;
 
-        const blockInfo = (getBlockInfo ? getBlockInfo() : null)
-            ?? this.deps.getBlockInfoForHandle(handle)
-            ?? this.deps.getBlockInfoAtPoint(e.clientX, e.clientY);
+        const blockInfo = this.resolveBlockInfoForHandleDrag(handle, e, getBlockInfo);
         if (!blockInfo) return;
         if (this.deps.isBlockInsideRenderedTableCell(blockInfo)) return;
 
+        const multiSelectionDragSource = this.resolveMultiSelectionDragSource(blockInfo);
         const multiLineSelectionEnabled = this.isMultiLineSelectionEnabled();
         if (e.pointerType === 'mouse') {
             if (e.button !== 0) return;
             if (!multiLineSelectionEnabled) {
+                return;
+            }
+            if (multiSelectionDragSource) {
                 return;
             }
             this.beginRangeSelectionSession(blockInfo, e, handle, {
@@ -265,15 +274,16 @@ export class DragEventHandler {
             return;
         }
 
+        const dragSource = multiSelectionDragSource ?? blockInfo;
         if (this.isMobileEnvironment()) {
-            this.beginPressPendingDrag(blockInfo, e);
+            this.beginPressPendingDrag(dragSource, e);
             return;
         }
 
         e.preventDefault();
         e.stopPropagation();
         this.pointer.tryCapturePointer(e);
-        this.enterDraggingState(blockInfo, e.pointerId, e.clientX, e.clientY, e.pointerType || null);
+        this.enterDraggingState(dragSource, e.pointerId, e.clientX, e.clientY, e.pointerType || null);
     }
 
     destroy(): void {
@@ -301,6 +311,20 @@ export class DragEventHandler {
             return;
         }
         this.rangeVisual.scheduleRefresh();
+    }
+
+    resolveDragSourceFromHandle(
+        handle: HTMLElement,
+        event: { clientX: number; clientY: number },
+        getBlockInfo?: () => BlockInfo | null
+    ): BlockInfo | null {
+        const blockInfo = this.resolveBlockInfoForHandleDrag(handle, event, getBlockInfo);
+        if (!blockInfo) return null;
+        return this.resolveMultiSelectionDragSource(blockInfo) ?? blockInfo;
+    }
+
+    clearCommittedSelectionForDragStart(): void {
+        this.clearCommittedRangeSelection();
     }
 
     private resolveDragTransferGuard(e: DragEvent) {
@@ -716,6 +740,74 @@ export class DragEventHandler {
         this.committedRangeSelection = clearCommittedSelectionRangeByFlow(this.committedRangeSelection, this.rangeVisual);
     }
 
+    private resolveBlockInfoForHandleDrag(
+        handle: HTMLElement,
+        event: { clientX: number; clientY: number },
+        getBlockInfo?: () => BlockInfo | null
+    ): BlockInfo | null {
+        return (getBlockInfo ? getBlockInfo() : null)
+            ?? this.deps.getBlockInfoForHandle(handle)
+            ?? this.deps.getBlockInfoAtPoint(event.clientX, event.clientY);
+    }
+
+    private resolveCommittedSelectionDragSource(blockInfo: BlockInfo): BlockInfo | null {
+        if (!this.isMultiLineSelectionEnabled()) return null;
+        if (!this.committedRangeSelection) return null;
+        const selectedBlock = buildSelectedBlockRangeFromBlockInfo(blockInfo);
+        const handleLineNumber = selectedBlock.startLineNumber;
+        const isSelectedHandle = this.committedRangeSelection.blocks.some((block) =>
+            handleLineNumber >= block.startLineNumber
+            && handleLineNumber <= block.endLineNumber
+        );
+        if (!isSelectedHandle) return null;
+        return this.getCommittedSelectionBlock();
+    }
+
+    private resolveMultiSelectionDragSource(blockInfo: BlockInfo): BlockInfo | null {
+        return this.resolveCommittedSelectionDragSource(blockInfo)
+            ?? this.resolveEditorSelectionDragSource(blockInfo);
+    }
+
+    private resolveEditorSelectionDragSource(blockInfo: BlockInfo): BlockInfo | null {
+        if (!this.isMultiLineSelectionEnabled()) return null;
+
+        const selectionBlocks = this.collectEditorSelectionBlocks();
+        if (selectionBlocks.length <= 1) return null;
+
+        const handleLineNumber = blockInfo.startLine + 1;
+        const isSelectedHandle = selectionBlocks.some((block) =>
+            handleLineNumber >= block.startLineNumber
+            && handleLineNumber <= block.endLineNumber
+        );
+        if (!isSelectedHandle) return null;
+
+        return buildDragSourceBlockFromBlocks(this.view.state.doc, selectionBlocks, blockInfo);
+    }
+
+    private collectEditorSelectionBlocks(): SelectedBlockRange[] {
+        const state = this.view.state;
+        const doc = state.doc;
+        const selectedBlocks: SelectedBlockRange[] = [];
+
+        for (const range of state.selection.ranges) {
+            if (range.empty) continue;
+            const from = Math.max(0, Math.min(range.from, range.to));
+            const to = Math.max(from, Math.max(range.from, range.to));
+            const effectiveTo = Math.max(from, to - 1);
+            const startLineNumber = doc.lineAt(from).number;
+            const endLineNumber = doc.lineAt(effectiveTo).number;
+            selectedBlocks.push(...collectSelectedBlocksBetween(
+                state,
+                startLineNumber,
+                startLineNumber,
+                endLineNumber,
+                endLineNumber
+            ));
+        }
+
+        return mergeSelectedBlocks(doc.lines, selectedBlocks);
+    }
+
     private deleteCommittedRangeSelection(): void {
         this.committedRangeSelection = deleteCommittedSelectionRangeByFlow(
             this.view,
@@ -1036,8 +1128,3 @@ export class DragEventHandler {
         );
     }
 }
-
-
-
-
-

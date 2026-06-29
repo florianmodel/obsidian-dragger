@@ -49,9 +49,9 @@ export const zhCn = {
     indicatorColor: '指示器颜色',
     indicatorColorDesc: '跟随主题强调色或自定义颜色',
 
-    // Multi-line selection
-    multiLineSelection: '多行选取',
-    multiLineSelectionDesc: '关闭后仅保留单块拖拽，不进入多行选取流程',
+    // Multi-select drag
+    multiLineSelection: '多选拖拽',
+    multiLineSelectionDesc: '开启后可通过手柄或原生文本选区选择多个块，并作为一组拖拽',
     enableMultiSelectionDeleteButton: '多选显示删除按钮',
     enableMultiSelectionDeleteButtonDesc: '开启后，多文本块选中状态会在左侧连线顶部显示删除按钮',
     multiLineSelectionLongPressMs: '多选模式长按时长',

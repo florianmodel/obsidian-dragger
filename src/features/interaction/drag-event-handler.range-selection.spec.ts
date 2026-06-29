@@ -385,7 +385,7 @@ describe('DragEventHandler Range Selection', () => {
         handler.destroy();
     });
 
-    it('supports immediate handle-slide deselection in committed multi-select mode', () => {
+    it('leaves a selected handle available for native multi-select drag', () => {
         const view = createViewStub(8);
         const startHandle = appendHandleForBlockStart(view, 1);
         const endHandle = appendHandleForBlockStart(view, 5);
@@ -430,7 +430,7 @@ describe('DragEventHandler Range Selection', () => {
         const committedLink = view.dom.querySelector<HTMLElement>('.dnd-range-selection-link.is-active');
         expect(committedLink).not.toBeNull();
 
-        dispatchPointer(endHandle, 'pointerdown', {
+        const downEvent = dispatchPointer(endHandle, 'pointerdown', {
             pointerId: 172,
             pointerType: 'mouse',
             clientX: 12,
@@ -450,11 +450,187 @@ describe('DragEventHandler Range Selection', () => {
         });
 
         expect(beginPointerDragSession).not.toHaveBeenCalled();
-        expect(view.dom.querySelector('.dnd-range-selection-link.is-active')).toBeNull();
+        expect(downEvent.defaultPrevented).toBe(false);
+        expect(endHandle.getAttribute('draggable')).toBe('true');
+
+        const dragSource = handler.resolveDragSourceFromHandle(endHandle, {
+            clientX: 12,
+            clientY: 105,
+        }, () => endBlock);
+        expect(dragSource?.startLine).toBe(1);
+        expect(dragSource?.endLine).toBe(5);
+        expect(view.dom.querySelector('.dnd-range-selection-link.is-active')).not.toBeNull();
         handler.destroy();
     });
 
-    it('prioritizes long-press drag over toggle when pressing a selected handle', () => {
+    it('uses the committed selection when dragging a nested-list handle inside the selected range', () => {
+        const view = createViewStub([
+            '- parent',
+            '  - nested',
+            '    - deep',
+            'paragraph',
+            'after',
+        ]);
+        const parentHandle = appendHandleForBlockStart(view, 0);
+        const nestedHandle = appendHandleForBlockStart(view, 1);
+        const paragraphHandle = appendHandleForBlockStart(view, 3);
+
+        const parentBlock = createBlock('- parent\n  - nested\n    - deep', 0, 2);
+        const nestedBlock = createBlock('  - nested\n    - deep', 1, 2);
+        const paragraphBlock = createBlock('paragraph', 3, 3);
+        const handler = new DragEventHandler(view, {
+            getDragSourceBlock: () => null,
+            getBlockInfoForHandle: (handle) => {
+                if (handle === nestedHandle) return nestedBlock;
+                if (handle === paragraphHandle) return paragraphBlock;
+                return parentBlock;
+            },
+            getBlockInfoAtPoint: (_x, y) => (y >= 60 ? paragraphBlock : parentBlock),
+            isBlockInsideRenderedTableCell: () => false,
+            beginPointerDragSession: vi.fn(),
+            finishDragSession: vi.fn(),
+            scheduleDropIndicatorUpdate: vi.fn(),
+            hideDropIndicator: vi.fn(),
+            performDropAtPoint: vi.fn(),
+        });
+
+        handler.attach();
+        dispatchPointer(parentHandle, 'pointerdown', {
+            pointerId: 271,
+            pointerType: 'mouse',
+            clientX: 12,
+            clientY: 10,
+        });
+        vi.advanceTimersByTime(280);
+        dispatchPointer(window, 'pointermove', {
+            pointerId: 271,
+            pointerType: 'mouse',
+            clientX: 12,
+            clientY: 72,
+        });
+        dispatchPointer(window, 'pointerup', {
+            pointerId: 271,
+            pointerType: 'mouse',
+            clientX: 12,
+            clientY: 72,
+        });
+
+        const downEvent = dispatchPointer(nestedHandle, 'pointerdown', {
+            pointerId: 272,
+            pointerType: 'mouse',
+            clientX: 12,
+            clientY: 30,
+        });
+        const dragSource = handler.resolveDragSourceFromHandle(nestedHandle, {
+            clientX: 12,
+            clientY: 30,
+        }, () => nestedBlock);
+
+        expect(downEvent.defaultPrevented).toBe(false);
+        expect(dragSource?.startLine).toBe(0);
+        expect(dragSource?.endLine).toBe(3);
+        expect(dragSource?.content).toBe('- parent\n  - nested\n    - deep\nparagraph');
+        handler.destroy();
+    });
+
+    it('uses native editor text selection when dragging a selected nested-list handle', () => {
+        const view = createViewStub([
+            '- parent',
+            '  - nested',
+            '    - deep',
+            'paragraph',
+            'after',
+        ]);
+        const nestedHandle = appendHandleForBlockStart(view, 1);
+
+        const viewRef = view as unknown as { state: EditorState };
+        viewRef.state = view.state.update({
+            selection: {
+                anchor: view.state.doc.line(2).from,
+                head: view.state.doc.line(4).to,
+            },
+        }).state;
+
+        const nestedBlock = createBlock('  - nested\n    - deep', 1, 2);
+        const paragraphBlock = createBlock('paragraph', 3, 3);
+        const beginPointerDragSession = vi.fn();
+        const handler = new DragEventHandler(view, {
+            getDragSourceBlock: () => null,
+            getBlockInfoForHandle: (handle) => (handle === nestedHandle ? nestedBlock : paragraphBlock),
+            getBlockInfoAtPoint: (_x, y) => (y >= 60 ? paragraphBlock : nestedBlock),
+            isBlockInsideRenderedTableCell: () => false,
+            beginPointerDragSession,
+            finishDragSession: vi.fn(),
+            scheduleDropIndicatorUpdate: vi.fn(),
+            hideDropIndicator: vi.fn(),
+            performDropAtPoint: vi.fn(),
+        });
+
+        handler.attach();
+        const downEvent = dispatchPointer(nestedHandle, 'pointerdown', {
+            pointerId: 372,
+            pointerType: 'mouse',
+            clientX: 12,
+            clientY: 30,
+        });
+        const dragSource = handler.resolveDragSourceFromHandle(nestedHandle, {
+            clientX: 12,
+            clientY: 30,
+        }, () => nestedBlock);
+
+        expect(downEvent.defaultPrevented).toBe(false);
+        expect(beginPointerDragSession).not.toHaveBeenCalled();
+        expect(dragSource?.startLine).toBe(1);
+        expect(dragSource?.endLine).toBe(3);
+        expect(dragSource?.content).toBe('  - nested\n    - deep\nparagraph');
+        expect(view.dom.querySelector('.dnd-range-selection-link')).toBeNull();
+        handler.destroy();
+    });
+
+    it('keeps handles outside native editor selection as single-block drag sources', () => {
+        const view = createViewStub([
+            '- parent',
+            '  - nested',
+            '    - deep',
+            'paragraph',
+            'after',
+        ]);
+        const parentHandle = appendHandleForBlockStart(view, 0);
+
+        const viewRef = view as unknown as { state: EditorState };
+        viewRef.state = view.state.update({
+            selection: {
+                anchor: view.state.doc.line(2).from,
+                head: view.state.doc.line(4).to,
+            },
+        }).state;
+
+        const parentBlock = createBlock('- parent\n  - nested\n    - deep', 0, 2);
+        const handler = new DragEventHandler(view, {
+            getDragSourceBlock: () => null,
+            getBlockInfoForHandle: () => parentBlock,
+            getBlockInfoAtPoint: () => parentBlock,
+            isBlockInsideRenderedTableCell: () => false,
+            beginPointerDragSession: vi.fn(),
+            finishDragSession: vi.fn(),
+            scheduleDropIndicatorUpdate: vi.fn(),
+            hideDropIndicator: vi.fn(),
+            performDropAtPoint: vi.fn(),
+        });
+
+        handler.attach();
+        const dragSource = handler.resolveDragSourceFromHandle(parentHandle, {
+            clientX: 12,
+            clientY: 10,
+        }, () => parentBlock);
+
+        expect(dragSource?.startLine).toBe(0);
+        expect(dragSource?.endLine).toBe(2);
+        expect(dragSource?.content).toBe('- parent\n  - nested\n    - deep');
+        handler.destroy();
+    });
+
+    it('resolves a disjoint committed selection from any selected handle', () => {
         const view = createViewStub(8);
         const startHandle = appendHandleForBlockStart(view, 1);
         const endHandle = appendHandleForBlockStart(view, 5);
@@ -462,7 +638,6 @@ describe('DragEventHandler Range Selection', () => {
         const sourceBlock = createBlock('- item', 1, 1);
         const endBlock = createBlock('line 6', 5, 5);
         const beginPointerDragSession = vi.fn();
-        const scheduleDropIndicatorUpdate = vi.fn();
 
         const handler = new DragEventHandler(view, {
             getDragSourceBlock: () => null,
@@ -471,7 +646,7 @@ describe('DragEventHandler Range Selection', () => {
             isBlockInsideRenderedTableCell: () => false,
             beginPointerDragSession,
             finishDragSession: vi.fn(),
-            scheduleDropIndicatorUpdate,
+            scheduleDropIndicatorUpdate: vi.fn(),
             hideDropIndicator: vi.fn(),
             performDropAtPoint: vi.fn(),
         });
@@ -484,17 +659,11 @@ describe('DragEventHandler Range Selection', () => {
             clientY: 30,
         });
         vi.advanceTimersByTime(280);
-        dispatchPointer(window, 'pointermove', {
-            pointerId: 181,
-            pointerType: 'mouse',
-            clientX: 12,
-            clientY: 105,
-        });
         dispatchPointer(window, 'pointerup', {
             pointerId: 181,
             pointerType: 'mouse',
             clientX: 12,
-            clientY: 105,
+            clientY: 30,
         });
 
         const committedLink = view.dom.querySelector<HTMLElement>('.dnd-range-selection-link.is-active');
@@ -506,34 +675,35 @@ describe('DragEventHandler Range Selection', () => {
             clientX: 12,
             clientY: 105,
         });
-        vi.advanceTimersByTime(280);
-        dispatchPointer(window, 'pointermove', {
+        dispatchPointer(window, 'pointerup', {
             pointerId: 182,
             pointerType: 'mouse',
-            clientX: 90,
+            clientX: 12,
             clientY: 105,
         });
 
-        expect(beginPointerDragSession).toHaveBeenCalledTimes(1);
-        const selectedBlock = beginPointerDragSession.mock.calls[0][0] as BlockInfo;
-        expect(selectedBlock.startLine).toBe(1);
-        expect(selectedBlock.endLine).toBe(5);
-        expect(scheduleDropIndicatorUpdate).toHaveBeenCalledWith(90, 105, expect.objectContaining({
-            startLine: 1,
-            endLine: 5,
-        }), 'mouse');
+        expect(beginPointerDragSession).not.toHaveBeenCalled();
+        const dragSource = handler.resolveDragSourceFromHandle(endHandle, {
+            clientX: 12,
+            clientY: 105,
+        }, () => endBlock);
+        expect(dragSource?.startLine).toBe(1);
+        expect(dragSource?.endLine).toBe(5);
+        expect(dragSource?.content).toBe('line 2\nline 6');
+        expect(dragSource?.compositeSelection?.ranges).toEqual([
+            { startLine: 1, endLine: 1 },
+            { startLine: 5, endLine: 5 },
+        ]);
         handler.destroy();
     });
 
-    it('clears committed selection overlay when dragging from a selected handle', () => {
+    it('clears committed selection overlay when native multi-select drag starts', () => {
         const view = createViewStub(8);
         const startHandle = appendHandleForBlockStart(view, 1);
         const endHandle = appendHandleForBlockStart(view, 5);
 
         const sourceBlock = createBlock('- item', 1, 1);
         const endBlock = createBlock('line 6', 5, 5);
-        const performDropAtPoint = vi.fn();
-
         const handler = new DragEventHandler(view, {
             getDragSourceBlock: () => null,
             getBlockInfoForHandle: (handle) => (handle === endHandle ? endBlock : sourceBlock),
@@ -543,7 +713,7 @@ describe('DragEventHandler Range Selection', () => {
             finishDragSession: vi.fn(),
             scheduleDropIndicatorUpdate: vi.fn(),
             hideDropIndicator: vi.fn(),
-            performDropAtPoint,
+            performDropAtPoint: vi.fn(),
         });
 
         handler.attach();
@@ -569,35 +739,26 @@ describe('DragEventHandler Range Selection', () => {
 
         expect(view.dom.querySelector('.dnd-range-selection-link.is-active')).not.toBeNull();
 
-        dispatchPointer(endHandle, 'pointerdown', {
+        const downEvent = dispatchPointer(endHandle, 'pointerdown', {
             pointerId: 282,
             pointerType: 'mouse',
             clientX: 12,
             clientY: 105,
         });
-        vi.advanceTimersByTime(280);
-        dispatchPointer(window, 'pointermove', {
-            pointerId: 282,
-            pointerType: 'mouse',
-            clientX: 90,
+        expect(downEvent.defaultPrevented).toBe(false);
+
+        const dragSource = handler.resolveDragSourceFromHandle(endHandle, {
+            clientX: 12,
             clientY: 105,
-        });
-
-        expect(view.dom.querySelector('.dnd-range-selection-link.is-active')).toBeNull();
-
-        dispatchPointer(window, 'pointerup', {
-            pointerId: 282,
-            pointerType: 'mouse',
-            clientX: 90,
-            clientY: 105,
-        });
-
-        expect(performDropAtPoint).toHaveBeenCalledTimes(1);
+        }, () => endBlock);
+        expect(dragSource?.startLine).toBe(1);
+        expect(dragSource?.endLine).toBe(5);
+        handler.clearCommittedSelectionForDragStart();
         expect(view.dom.querySelector('.dnd-range-selection-link.is-active')).toBeNull();
         handler.destroy();
     });
 
-    it('still starts long-press drag for a committed selection after small pointer jitter on a selected handle', () => {
+    it('keeps selected-handle pointer jitter available for native drag startup', () => {
         const view = createViewStub(8);
         const startHandle = appendHandleForBlockStart(view, 1);
         const endHandle = appendHandleForBlockStart(view, 5);
@@ -605,7 +766,6 @@ describe('DragEventHandler Range Selection', () => {
         const sourceBlock = createBlock('- item', 1, 1);
         const endBlock = createBlock('line 6', 5, 5);
         const beginPointerDragSession = vi.fn();
-        const scheduleDropIndicatorUpdate = vi.fn();
 
         const handler = new DragEventHandler(view, {
             getDragSourceBlock: () => null,
@@ -614,7 +774,7 @@ describe('DragEventHandler Range Selection', () => {
             isBlockInsideRenderedTableCell: () => false,
             beginPointerDragSession,
             finishDragSession: vi.fn(),
-            scheduleDropIndicatorUpdate,
+            scheduleDropIndicatorUpdate: vi.fn(),
             hideDropIndicator: vi.fn(),
             performDropAtPoint: vi.fn(),
         });
@@ -640,7 +800,7 @@ describe('DragEventHandler Range Selection', () => {
             clientY: 105,
         });
 
-        dispatchPointer(endHandle, 'pointerdown', {
+        const downEvent = dispatchPointer(endHandle, 'pointerdown', {
             pointerId: 282,
             pointerType: 'mouse',
             clientX: 12,
@@ -660,11 +820,15 @@ describe('DragEventHandler Range Selection', () => {
             clientY: 105,
         });
 
-        expect(beginPointerDragSession).toHaveBeenCalledTimes(1);
-        expect(scheduleDropIndicatorUpdate).toHaveBeenCalledWith(90, 105, expect.objectContaining({
-            startLine: 1,
-            endLine: 5,
-        }), 'mouse');
+        expect(downEvent.defaultPrevented).toBe(false);
+        expect(beginPointerDragSession).not.toHaveBeenCalled();
+        const dragSource = handler.resolveDragSourceFromHandle(endHandle, {
+            clientX: 90,
+            clientY: 105,
+        }, () => endBlock);
+        expect(dragSource?.startLine).toBe(1);
+        expect(dragSource?.endLine).toBe(5);
+        expect(view.dom.querySelector('.dnd-range-selection-link.is-active')).not.toBeNull();
         handler.destroy();
     });
 
@@ -1867,7 +2031,3 @@ describe('DragEventHandler Range Selection', () => {
         handler.destroy();
     });
 });
-
-
-
-

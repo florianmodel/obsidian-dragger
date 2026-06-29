@@ -64,13 +64,24 @@ export class DragInteractionOrchestrator {
         const handle = createDragHandleElement({
             onDragStart: (e, el) => {
                 this.getSemanticRefreshScheduler().ensureSemanticReadyForInteraction();
+                const dragEventHandler = this.getDragEventHandler();
                 const resolveCurrentBlock = () => this.resolveInteractionBlockInfo({
                     handle,
                     clientX: e.clientX,
                     clientY: e.clientY,
                     fallback: getBlockInfo,
                 });
-                const sourceBlock = resolveCurrentBlock();
+                let resolvedDragSource: BlockInfo | null | undefined;
+                const resolveDragSource = () => {
+                    if (resolvedDragSource !== undefined) return resolvedDragSource;
+                    resolvedDragSource = dragEventHandler.resolveDragSourceFromHandle(
+                        handle,
+                        e,
+                        resolveCurrentBlock
+                    );
+                    return resolvedDragSource;
+                };
+                const sourceBlock = resolveDragSource();
                 if (sourceBlock) {
                     this.handleVisibility.enterGrabVisualStateForBlock(
                         sourceBlock,
@@ -79,7 +90,7 @@ export class DragInteractionOrchestrator {
                 } else {
                     this.handleVisibility.setActiveVisibleHandle(el);
                 }
-                const started = startDragFromHandle(e, this.view, () => resolveCurrentBlock(), el);
+                const started = startDragFromHandle(e, this.view, resolveDragSource, el);
                 if (!started) {
                     this.handleVisibility.setActiveVisibleHandle(null);
                     finishDragSession(this.view);
@@ -102,6 +113,7 @@ export class DragInteractionOrchestrator {
                     });
                     return;
                 }
+                dragEventHandler.clearCommittedSelectionForDragStart();
                 this.ensureDragPerfSession();
                 this.emitDragLifecycle({
                     state: 'drag_active',
@@ -307,7 +319,6 @@ export class DragInteractionOrchestrator {
             : 'different_document';
     }
 }
-
 
 
 
